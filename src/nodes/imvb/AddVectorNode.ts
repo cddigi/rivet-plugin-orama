@@ -16,12 +16,15 @@ import type {
   Rivet,
 } from "@ironclad/rivet-core";
 
+import type { AnyOrama } from "@orama/orama";
 import { insert } from "@orama/orama";
 import { vdb } from "./CreateDatabaseNode";
 
 export type AddVectorNode = ChartNode<
   "addVector",
   {
+    vdb?: AnyOrama;
+    useVdbInput?: boolean;
     id: string;
     useIdInput?: boolean;
     embedding: number[];
@@ -38,6 +41,7 @@ export const addVectorPluginNode = (rivet: typeof Rivet) => {
         id: rivet.newId<NodeId>(),
 
         data: {
+          vdb: undefined,
           id: "",
           embedding: [],
           text: "",
