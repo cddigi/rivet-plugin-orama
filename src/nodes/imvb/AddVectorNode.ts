@@ -16,7 +16,8 @@ import type {
   Rivet,
 } from "@ironclad/rivet-core";
 
-import { create, search, insert } from "@orama/orama";
+import { insert } from "@orama/orama";
+import { vdb } from "./CreateDatabaseNode";
 
 export type AddVectorNode = ChartNode<
   "addVector",
@@ -179,15 +180,7 @@ export const addVectorPluginNode = (rivet: typeof Rivet) => {
         "useTextInput",
       );
 
-      const vdb = await create({
-        schema: {
-          name: "string",
-          body: "string",
-          embedding: `vector[${embedding.length}]`,
-        } as const,
-      });
-
-      await insert(vdb, {
+      const added = await insert(vdb, {
         name: id,
         body: text,
         embedding: embedding,
@@ -196,15 +189,7 @@ export const addVectorPluginNode = (rivet: typeof Rivet) => {
       return {
         ["id" as PortId]: {
           type: "string",
-          value: searchResult.hits[0].id,
-        },
-        ["score" as PortId]: {
-          type: "number",
-          value: searchResult.hits[0].score,
-        },
-        ["document" as PortId]: {
-          type: "any",
-          value: searchResult.hits[0].document,
+          value: added,
         },
       };
     },
