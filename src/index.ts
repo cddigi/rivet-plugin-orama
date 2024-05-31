@@ -4,14 +4,18 @@
 import type { RivetPlugin, RivetPluginInitializer } from "@ironclad/rivet-core";
 
 import { guidPluginNode } from "./nodes/common/GuidPluginNode.js";
-import { addVectorPluginNode } from "./nodes/imvb/AddVectorNode.js";
+import { insertVectorPluginNode } from "./nodes/imvb/InsertVectorNode.js";
+import { createDatabasePluginNode } from "./nodes/imvb/CreateDatabaseNode.js";
+import { searchDatabasePluginNode } from "./nodes/imvb/SearchDatabaseNode.js";
 
 // A Rivet plugin must default export a plugin initializer function. This takes in the Rivet library as its
 // only parameter. This function must return a valid RivetPlugin object.
 const plugin: RivetPluginInitializer = (rivet) => {
   // Initialize any nodes in here in the same way, by passing them the Rivet library.
   const guidNode = guidPluginNode(rivet);
-  const addVectorNode = addVectorPluginNode(rivet);
+  const insertVectorNode = insertVectorPluginNode(rivet);
+  const createDatabaseNode = createDatabasePluginNode(rivet);
+  const searchDatabaseNode = searchDatabasePluginNode(rivet);
 
   // The plugin object is the definition for your plugin.
   const tuesdayCrowdPlugin: RivetPlugin = {
@@ -25,13 +29,20 @@ const plugin: RivetPluginInitializer = (rivet) => {
     configSpec: {},
 
     // Define any additional context menu groups your plugin adds here.
-    contextMenuGroups: [],
+    contextMenuGroups: [
+      {
+        id: "orama",
+        label: "Orama",
+      },
+    ],
 
     // Register any additional nodes your plugin adds here. This is passed a `register`
     // function, which you can use to register your nodes.
     register: (register) => {
       register(guidNode);
-      register(addVectorNode);
+      register(insertVectorNode);
+      register(createDatabaseNode);
+      register(searchDatabaseNode);
     },
   };
 

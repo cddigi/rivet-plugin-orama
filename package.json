@@ -4,7 +4,9 @@
   "version": "1.0.0",
   "type": "module",
   "main": "dist/bundle.js",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -b && tsx bundle.ts",
     "dev": "run-p watch:tsc watch:esbuild:sync",
@@ -15,7 +17,8 @@
   },
   "dependencies": {
     "@ironclad/rivet-core": "^1.18.0",
-    "@orama/orama": "^2.0.18"
+    "@orama/orama": "^2.0.18",
+    "@orama/plugin-data-persistence": "^2.0.18"
   },
   "devDependencies": {
     "esbuild": "^0.19.2",

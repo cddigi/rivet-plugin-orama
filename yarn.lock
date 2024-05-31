@@ -406,6 +406,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@msgpack/msgpack@npm:^2.7.2":
+  version: 2.8.0
+  resolution: "@msgpack/msgpack@npm:2.8.0"
+  checksum: bead9393f57239007a2fe455df5277cbc03b125f14f310162a652b81471dcf3ab6780eaa24b36e20aa742998910a6840147d08b7267063b8e2de5d40c624360e
+  languageName: node
+  linkType: hard
+
 "@npmcli/agent@npm:^2.0.0":
   version: 2.2.2
   resolution: "@npmcli/agent@npm:2.2.2"
@@ -428,10 +435,21 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@orama/orama@npm:^2.0.18":
+"@orama/orama@npm:2.0.18, @orama/orama@npm:^2.0.18":
   version: 2.0.18
   resolution: "@orama/orama@npm:2.0.18"
   checksum: 92b31fbcdebca10842ad9277e4a5f1ad3d5d64c0ac81110a5dc36383366c8cf39ea681d02d449f833276464e3b2b2bd411f8e31346d52429956870663c49615a
+  languageName: node
+  linkType: hard
+
+"@orama/plugin-data-persistence@npm:^2.0.18":
+  version: 2.0.18
+  resolution: "@orama/plugin-data-persistence@npm:2.0.18"
+  dependencies:
+    "@msgpack/msgpack": ^2.7.2
+    "@orama/orama": 2.0.18
+    dpack: ^0.6.22
+  checksum: 5e66a0a4629b0fe9955c3a3f091282c78df6d529d4979e047255e672c168ca42e27c30eb455ad03aee5182f0cd209b67d28fc0e58bbd2658106b95cbba996a4f
   languageName: node
   linkType: hard
 
@@ -1001,6 +1019,13 @@ __metadata:
   version: 1.0.0
   resolution: "delayed-stream@npm:1.0.0"
   checksum: 46fe6e83e2cb1d85ba50bd52803c68be9bd953282fa7096f51fc29edd5d67ff84ff753c51966061e5ba7cb5e47ef6d36a91924eddb7f3f3483b1c560f77a0020
+  languageName: node
+  linkType: hard
+
+"dpack@npm:^0.6.22":
+  version: 0.6.22
+  resolution: "dpack@npm:0.6.22"
+  checksum: 44b4de3239dceeddf33aa5c9226d7dadf7621c771bfeb14d5306f910c9e57e0fc064897adaca8c86f62ed1de6c918600a4fc56093c0d520eace7b62006ea9d6c
   languageName: node
   linkType: hard
 
@@ -2940,6 +2965,7 @@ __metadata:
   dependencies:
     "@ironclad/rivet-core": ^1.18.0
     "@orama/orama": ^2.0.18
+    "@orama/plugin-data-persistence": ^2.0.18
     esbuild: ^0.19.2
     npm-run-all: ^4.1.5
     recursive-copy: ^2.0.14
