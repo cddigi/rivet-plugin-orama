@@ -308,6 +308,15 @@ function sprintf(template, ...args) {
     }
   });
 }
+function isInsideWebWorker() {
+  return typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScope;
+}
+function isInsideNode() {
+  return typeof process !== "undefined" && process.release && process.release.name === "node";
+}
+function getNanosecondTimeViaPerformance() {
+  return BigInt(Math.floor(performance.now() * 1e6));
+}
 async function formatNanoseconds(value) {
   if (typeof value === "number") {
     value = BigInt(value);
@@ -321,6 +330,22 @@ async function formatNanoseconds(value) {
   }
   return `${value / second}s`;
 }
+async function getNanosecondsTime() {
+  var _process_hrtime;
+  if (isInsideWebWorker()) {
+    return getNanosecondTimeViaPerformance();
+  }
+  if (isInsideNode()) {
+    return process.hrtime.bigint();
+  }
+  if (typeof process !== "undefined" && typeof (process === null || process === void 0 ? void 0 : (_process_hrtime = process.hrtime) === null || _process_hrtime === void 0 ? void 0 : _process_hrtime.bigint) === "function") {
+    return process.hrtime.bigint();
+  }
+  if (typeof performance !== "undefined") {
+    return getNanosecondTimeViaPerformance();
+  }
+  return BigInt(0);
+}
 async function uniqueId() {
   return `${baseId}-${lastId++}`;
 }
@@ -329,6 +354,12 @@ function getOwnProperty(object, property) {
     return Object.prototype.hasOwnProperty.call(object, property) ? object[property] : void 0;
   }
   return Object.hasOwn(object, property) ? object[property] : void 0;
+}
+function sortTokenScorePredicate(a, b) {
+  if (b[1] === a[1]) {
+    return a[0] - b[0];
+  }
+  return b[1] - a[1];
 }
 function intersect(arrays) {
   if (arrays.length === 0) {
@@ -395,6 +426,12 @@ async function getDocumentProperties(doc, paths) {
   }
   return properties;
 }
+async function getNested(obj, path) {
+  const props = await getDocumentProperties(obj, [
+    path
+  ]);
+  return props[path];
+}
 var mapDistanceToMeters = {
   cm: 0.01,
   m: 1,
@@ -409,6 +446,26 @@ function convertDistanceToMeters(distance, unit) {
     throw new Error(createError("INVALID_DISTANCE_SUFFIX", distance).message);
   }
   return distance * ratio;
+}
+function removeVectorsFromHits(searchResult, vectorProperties) {
+  searchResult.hits = searchResult.hits.map((result) => ({
+    ...result,
+    document: {
+      ...result.document,
+      // Remove embeddings from the result
+      ...vectorProperties.reduce((acc, prop) => {
+        const path = prop.split(".");
+        const lastKey = path.pop();
+        let obj = acc;
+        for (const key of path) {
+          obj[key] = obj[key] ?? {};
+          obj = obj[key];
+        }
+        obj[lastKey] = null;
+        return acc;
+      }, result.document)
+    }
+  }));
 }
 
 // node_modules/@orama/orama/dist/errors.js
@@ -618,6 +675,12 @@ function getInternalDocumentId(store2, id) {
   }
   return id;
 }
+function getDocumentIdFromInternalId(store2, internalId) {
+  if (store2.internalIdToId.length < internalId) {
+    throw new Error(`Invalid internalId ${internalId}`);
+  }
+  return store2.internalIdToId[internalId - 1];
+}
 
 // node_modules/@orama/orama/dist/components/documents-store.js
 async function create(_, sharedInternalDocumentStore) {
@@ -752,6 +815,18 @@ async function runSingleHook(hooks, orama, id, doc) {
   const hooksLength = hooks.length;
   for (let i = 0; i < hooksLength; i++) {
     await hooks[i](orama, id, doc);
+  }
+}
+async function runAfterSearch(hooks, db, params, language, results) {
+  const hooksLength = hooks.length;
+  for (let i = 0; i < hooksLength; i++) {
+    await hooks[i](db, params, language, results);
+  }
+}
+async function runBeforeSearch(hooks, db, params, language) {
+  const hooksLength = hooks.length;
+  for (let i = 0; i < hooksLength; i++) {
+    await hooks[i](db, params, language);
   }
 }
 async function runAfterCreate(hooks, db) {
@@ -1682,6 +1757,93 @@ function vincentyDistance(coord1, coord2) {
 }
 
 // node_modules/@orama/orama/dist/components/algorithms.js
+function prioritizeTokenScores(arrays, boost, threshold = 1, keywordsCount) {
+  if (boost === 0) {
+    throw createError("INVALID_BOOST_VALUE");
+  }
+  const tokenScoresMap = /* @__PURE__ */ new Map();
+  const mapsLength = arrays.length;
+  for (let i = 0; i < mapsLength; i++) {
+    const arr = arrays[i];
+    const entriesLength = arr.length;
+    for (let j = 0; j < entriesLength; j++) {
+      var _tokenScoresMap_get;
+      const [token, score] = arr[j];
+      const boostScore = score * boost;
+      const oldScore = (_tokenScoresMap_get = tokenScoresMap.get(token)) === null || _tokenScoresMap_get === void 0 ? void 0 : _tokenScoresMap_get[0];
+      if (oldScore !== void 0) {
+        var _tokenScoresMap_get1;
+        tokenScoresMap.set(token, [
+          oldScore * 1.5 + boostScore,
+          (((_tokenScoresMap_get1 = tokenScoresMap === null || tokenScoresMap === void 0 ? void 0 : tokenScoresMap.get(token)) === null || _tokenScoresMap_get1 === void 0 ? void 0 : _tokenScoresMap_get1[1]) || 0) + 1
+        ]);
+      } else {
+        tokenScoresMap.set(token, [
+          boostScore,
+          1
+        ]);
+      }
+    }
+  }
+  const tokenScores = [];
+  for (const tokenScoreEntry of tokenScoresMap.entries()) {
+    tokenScores.push([
+      tokenScoreEntry[0],
+      tokenScoreEntry[1][0]
+    ]);
+  }
+  const results = tokenScores.sort((a, b) => b[1] - a[1]);
+  if (threshold === 1) {
+    return results;
+  }
+  const allResults = results.length;
+  const tokenScoreWithKeywordsCount = [];
+  for (const tokenScoreEntry of tokenScoresMap.entries()) {
+    tokenScoreWithKeywordsCount.push([
+      tokenScoreEntry[0],
+      tokenScoreEntry[1][0],
+      tokenScoreEntry[1][1]
+    ]);
+  }
+  const keywordsPerToken = tokenScoreWithKeywordsCount.sort((a, b) => {
+    if (a[2] > b[2])
+      return -1;
+    if (a[2] < b[2])
+      return 1;
+    if (a[1] > b[1])
+      return -1;
+    if (a[1] < b[1])
+      return 1;
+    return 0;
+  });
+  let lastTokenWithAllKeywords = void 0;
+  for (let i = 0; i < allResults; i++) {
+    if (keywordsPerToken[i][2] === keywordsCount) {
+      lastTokenWithAllKeywords = i;
+    } else {
+      break;
+    }
+  }
+  if (typeof lastTokenWithAllKeywords === "undefined") {
+    if (threshold === 0) {
+      return [];
+    }
+    lastTokenWithAllKeywords = 0;
+  }
+  const keywordsPerTokenLength = keywordsPerToken.length;
+  const resultsWithIdAndScore = new Array(keywordsPerTokenLength);
+  for (let i = 0; i < keywordsPerTokenLength; i++) {
+    resultsWithIdAndScore[i] = [
+      keywordsPerToken[i][0],
+      keywordsPerToken[i][1]
+    ];
+  }
+  if (threshold === 0) {
+    return resultsWithIdAndScore.slice(0, lastTokenWithAllKeywords + 1);
+  }
+  const thresholdLength = lastTokenWithAllKeywords + Math.ceil(threshold * 100 * (allResults - lastTokenWithAllKeywords) / 100);
+  return resultsWithIdAndScore.slice(0, allResults + thresholdLength);
+}
 function BM25(tf, matchingCount, docsCount, fieldLength, averageFieldLength, { k, b, d }) {
   const idf = Math.log(1 + (docsCount - matchingCount + 0.5) / (matchingCount + 0.5));
   return idf * (d + tf * (k + 1)) / (tf + k * (1 - b + b * fieldLength / averageFieldLength));
@@ -1694,6 +1856,24 @@ function getMagnitude(vector, vectorLength) {
     magnitude += vector[i] * vector[i];
   }
   return Math.sqrt(magnitude);
+}
+function findSimilarVectors(targetVector, vectors, length, threshold = 0.8) {
+  const targetMagnitude = getMagnitude(targetVector, length);
+  const similarVectors = [];
+  for (const [vectorId, [magnitude, vector]] of Object.entries(vectors)) {
+    let dotProduct = 0;
+    for (let i = 0; i < length; i++) {
+      dotProduct += targetVector[i] * vector[i];
+    }
+    const similarity = dotProduct / (targetMagnitude * magnitude);
+    if (similarity >= threshold) {
+      similarVectors.push([
+        vectorId,
+        similarity
+      ]);
+    }
+  }
+  return similarVectors.sort((a, b) => b[1] - a[1]);
 }
 
 // node_modules/@orama/orama/dist/components/index.js
@@ -3156,28 +3336,837 @@ async function innerInsert(orama, doc, language, skipHooks) {
   return id;
 }
 
-// src/nodes/imvb/CreateDatabaseNode.ts
-var vdb = await create8({
-  schema: {
-    name: "string",
-    body: "string",
-    embedding: `vector[1024]`
-  }
-});
+// node_modules/@orama/orama/dist/constants.js
+var MODE_FULLTEXT_SEARCH = "fulltext";
+var MODE_HYBRID_SEARCH = "hybrid";
+var MODE_VECTOR_SEARCH = "vector";
 
-// src/nodes/imvb/AddVectorNode.ts
-var addVectorPluginNode = (rivet) => {
+// node_modules/@orama/orama/dist/components/filters.js
+function intersectFilteredIDs(filtered, lookedUp) {
+  const map = /* @__PURE__ */ new Map();
+  const result = [];
+  for (const id of filtered) {
+    map.set(id, true);
+  }
+  for (const looked of lookedUp) {
+    const [id] = looked;
+    if (map.has(id)) {
+      result.push(looked);
+      map.delete(id);
+    }
+  }
+  return result;
+}
+
+// node_modules/@orama/orama/dist/components/facets.js
+function sortAsc(a, b) {
+  return a[1] - b[1];
+}
+function sortDesc(a, b) {
+  return b[1] - a[1];
+}
+function sortingPredicateBuilder(order = "desc") {
+  return order.toLowerCase() === "asc" ? sortAsc : sortDesc;
+}
+async function getFacets(orama, results, facetsConfig) {
+  const facets = {};
+  const allIDs = results.map(([id]) => id);
+  const allDocs = await orama.documentsStore.getMultiple(orama.data.docs, allIDs);
+  const facetKeys = Object.keys(facetsConfig);
+  const properties = await orama.index.getSearchablePropertiesWithTypes(orama.data.index);
+  for (const facet of facetKeys) {
+    let values;
+    if (properties[facet] === "number") {
+      const { ranges } = facetsConfig[facet];
+      const rangesLength = ranges.length;
+      const tmp = Array.from({
+        length: rangesLength
+      });
+      for (let i = 0; i < rangesLength; i++) {
+        const range = ranges[i];
+        tmp[i] = [
+          `${range.from}-${range.to}`,
+          0
+        ];
+      }
+      values = Object.fromEntries(tmp);
+    }
+    facets[facet] = {
+      count: 0,
+      values: values ?? {}
+    };
+  }
+  const allDocsLength = allDocs.length;
+  for (let i = 0; i < allDocsLength; i++) {
+    const doc = allDocs[i];
+    for (const facet of facetKeys) {
+      const facetValue = facet.includes(".") ? await getNested(doc, facet) : doc[facet];
+      const propertyType = properties[facet];
+      const facetValues = facets[facet].values;
+      switch (propertyType) {
+        case "number": {
+          const ranges = facetsConfig[facet].ranges;
+          calculateNumberFacetBuilder(ranges, facetValues)(facetValue);
+          break;
+        }
+        case "number[]": {
+          const alreadyInsertedValues = /* @__PURE__ */ new Set();
+          const ranges = facetsConfig[facet].ranges;
+          const calculateNumberFacet = calculateNumberFacetBuilder(ranges, facetValues, alreadyInsertedValues);
+          for (const v2 of facetValue) {
+            calculateNumberFacet(v2);
+          }
+          break;
+        }
+        case "boolean":
+        case "enum":
+        case "string": {
+          calculateBooleanStringOrEnumFacetBuilder(facetValues, propertyType)(facetValue);
+          break;
+        }
+        case "boolean[]":
+        case "enum[]":
+        case "string[]": {
+          const alreadyInsertedValues = /* @__PURE__ */ new Set();
+          const innerType = propertyType === "boolean[]" ? "boolean" : "string";
+          const calculateBooleanStringOrEnumFacet = calculateBooleanStringOrEnumFacetBuilder(facetValues, innerType, alreadyInsertedValues);
+          for (const v2 of facetValue) {
+            calculateBooleanStringOrEnumFacet(v2);
+          }
+          break;
+        }
+        default:
+          throw createError("FACET_NOT_SUPPORTED", propertyType);
+      }
+    }
+  }
+  for (const facet of facetKeys) {
+    const currentFacet = facets[facet];
+    currentFacet.count = Object.keys(currentFacet.values).length;
+    if (properties[facet] === "string") {
+      const stringFacetDefinition = facetsConfig[facet];
+      const sortingPredicate = sortingPredicateBuilder(stringFacetDefinition.sort);
+      currentFacet.values = Object.fromEntries(Object.entries(currentFacet.values).sort(sortingPredicate).slice(stringFacetDefinition.offset ?? 0, stringFacetDefinition.limit ?? 10));
+    }
+  }
+  return facets;
+}
+function calculateNumberFacetBuilder(ranges, values, alreadyInsertedValues) {
+  return (facetValue) => {
+    for (const range of ranges) {
+      const value = `${range.from}-${range.to}`;
+      if (alreadyInsertedValues === null || alreadyInsertedValues === void 0 ? void 0 : alreadyInsertedValues.has(value)) {
+        continue;
+      }
+      if (facetValue >= range.from && facetValue <= range.to) {
+        if (values[value] === void 0) {
+          values[value] = 1;
+        } else {
+          values[value]++;
+          alreadyInsertedValues === null || alreadyInsertedValues === void 0 ? void 0 : alreadyInsertedValues.add(value);
+        }
+      }
+    }
+  };
+}
+function calculateBooleanStringOrEnumFacetBuilder(values, propertyType, alreadyInsertedValues) {
+  const defaultValue = propertyType === "boolean" ? "false" : "";
+  return (facetValue) => {
+    const value = (facetValue === null || facetValue === void 0 ? void 0 : facetValue.toString()) ?? defaultValue;
+    if (alreadyInsertedValues === null || alreadyInsertedValues === void 0 ? void 0 : alreadyInsertedValues.has(value)) {
+      return;
+    }
+    values[value] = (values[value] ?? 0) + 1;
+    alreadyInsertedValues === null || alreadyInsertedValues === void 0 ? void 0 : alreadyInsertedValues.add(value);
+  };
+}
+
+// node_modules/@orama/orama/dist/components/groups.js
+var DEFAULT_REDUCE = {
+  reducer: (_, acc, res, index) => {
+    acc[index] = res;
+    return acc;
+  },
+  getInitialValue: (length) => Array.from({
+    length
+  })
+};
+var ALLOWED_TYPES = [
+  "string",
+  "number",
+  "boolean"
+];
+async function getGroups(orama, results, groupBy) {
+  const properties = groupBy.properties;
+  const propertiesLength = properties.length;
+  const schemaProperties = await orama.index.getSearchablePropertiesWithTypes(orama.data.index);
+  for (let i = 0; i < propertiesLength; i++) {
+    const property = properties[i];
+    if (typeof schemaProperties[property] === "undefined") {
+      throw createError("UNKNOWN_GROUP_BY_PROPERTY", property);
+    }
+    if (!ALLOWED_TYPES.includes(schemaProperties[property])) {
+      throw createError("INVALID_GROUP_BY_PROPERTY", property, ALLOWED_TYPES.join(", "), schemaProperties[property]);
+    }
+  }
+  const allIDs = results.map(([id]) => getDocumentIdFromInternalId(orama.internalDocumentIDStore, id));
+  const allDocs = await orama.documentsStore.getMultiple(orama.data.docs, allIDs);
+  const allDocsLength = allDocs.length;
+  const returnedCount = groupBy.maxResult || Number.MAX_SAFE_INTEGER;
+  const listOfValues = [];
+  const g = {};
+  for (let i = 0; i < propertiesLength; i++) {
+    const groupByKey = properties[i];
+    const group = {
+      property: groupByKey,
+      perValue: {}
+    };
+    const values = /* @__PURE__ */ new Set();
+    for (let j = 0; j < allDocsLength; j++) {
+      const doc = allDocs[j];
+      const value = await getNested(doc, groupByKey);
+      if (typeof value === "undefined") {
+        continue;
+      }
+      const keyValue = typeof value !== "boolean" ? value : "" + value;
+      const perValue = group.perValue[keyValue] ?? {
+        indexes: [],
+        count: 0
+      };
+      if (perValue.count >= returnedCount) {
+        continue;
+      }
+      perValue.indexes.push(j);
+      perValue.count++;
+      group.perValue[keyValue] = perValue;
+      values.add(value);
+    }
+    listOfValues.push(Array.from(values));
+    g[groupByKey] = group;
+  }
+  const combinations = calculateCombination(listOfValues);
+  const combinationsLength = combinations.length;
+  const groups = [];
+  for (let i = 0; i < combinationsLength; i++) {
+    const combination = combinations[i];
+    const combinationLength = combination.length;
+    const group = {
+      values: [],
+      indexes: []
+    };
+    const indexes = [];
+    for (let j = 0; j < combinationLength; j++) {
+      const value = combination[j];
+      const property = properties[j];
+      indexes.push(g[property].perValue[typeof value !== "boolean" ? value : "" + value].indexes);
+      group.values.push(value);
+    }
+    group.indexes = intersect(indexes).sort((a, b) => a - b);
+    if (group.indexes.length === 0) {
+      continue;
+    }
+    groups.push(group);
+  }
+  const groupsLength = groups.length;
+  const res = Array.from({
+    length: groupsLength
+  });
+  for (let i = 0; i < groupsLength; i++) {
+    const group = groups[i];
+    const reduce = groupBy.reduce || DEFAULT_REDUCE;
+    const docs = group.indexes.map((index) => {
+      return {
+        id: allIDs[index],
+        score: results[index][1],
+        document: allDocs[index]
+      };
+    });
+    const func = reduce.reducer.bind(null, group.values);
+    const initialValue = reduce.getInitialValue(group.indexes.length);
+    const aggregationValue = docs.reduce(func, initialValue);
+    res[i] = {
+      values: group.values,
+      result: aggregationValue
+    };
+  }
+  return res;
+}
+function calculateCombination(arrs, index = 0) {
+  if (index + 1 === arrs.length)
+    return arrs[index].map((item) => [
+      item
+    ]);
+  const head = arrs[index];
+  const c2 = calculateCombination(arrs, index + 1);
+  const combinations = [];
+  for (const value of head) {
+    for (const combination of c2) {
+      const result = [
+        value
+      ];
+      safeArrayPush(result, combination);
+      combinations.push(result);
+    }
+  }
+  return combinations;
+}
+
+// node_modules/@orama/orama/dist/methods/search-fulltext.js
+async function fullTextSearch(orama, params, language) {
+  const timeStart = await getNanosecondsTime();
+  if (orama.beforeSearch) {
+    await runBeforeSearch(orama.beforeSearch, orama, params, language);
+  }
+  params.relevance = Object.assign(defaultBM25Params, params.relevance ?? {});
+  const vectorProperties = Object.keys(orama.data.index.vectorIndexes);
+  const shouldCalculateFacets = params.facets && Object.keys(params.facets).length > 0;
+  const { limit = 10, offset = 0, term, properties, threshold = 1, distinctOn, includeVectors = false } = params;
+  const isPreflight = params.preflight === true;
+  const { index, docs } = orama.data;
+  const tokens = await orama.tokenizer.tokenize(term ?? "", language);
+  let propertiesToSearch = orama.caches["propertiesToSearch"];
+  if (!propertiesToSearch) {
+    const propertiesToSearchWithTypes = await orama.index.getSearchablePropertiesWithTypes(index);
+    propertiesToSearch = await orama.index.getSearchableProperties(index);
+    propertiesToSearch = propertiesToSearch.filter((prop) => propertiesToSearchWithTypes[prop].startsWith("string"));
+    orama.caches["propertiesToSearch"] = propertiesToSearch;
+  }
+  if (properties && properties !== "*") {
+    for (const prop of properties) {
+      if (!propertiesToSearch.includes(prop)) {
+        throw createError("UNKNOWN_INDEX", prop, propertiesToSearch.join(", "));
+      }
+    }
+    propertiesToSearch = propertiesToSearch.filter((prop) => properties.includes(prop));
+  }
+  const context = await createSearchContext(orama.tokenizer, orama.index, orama.documentsStore, language, params, propertiesToSearch, tokens, await orama.documentsStore.count(docs), timeStart);
+  const hasFilters = Object.keys(params.where ?? {}).length > 0;
+  let whereFiltersIDs = [];
+  if (hasFilters) {
+    whereFiltersIDs = await orama.index.searchByWhereClause(context, index, params.where);
+  }
+  const tokensLength = tokens.length;
+  if (tokensLength || properties && properties.length > 0) {
+    const indexesLength = propertiesToSearch.length;
+    for (let i = 0; i < indexesLength; i++) {
+      var _params_boost;
+      const prop = propertiesToSearch[i];
+      if (tokensLength !== 0) {
+        for (let j = 0; j < tokensLength; j++) {
+          const term2 = tokens[j];
+          const scoreList = await orama.index.search(context, index, prop, term2);
+          safeArrayPush(context.indexMap[prop][term2], scoreList);
+        }
+      } else {
+        context.indexMap[prop][""] = [];
+        const scoreList = await orama.index.search(context, index, prop, "");
+        safeArrayPush(context.indexMap[prop][""], scoreList);
+      }
+      const docIds = context.indexMap[prop];
+      const vals = Object.values(docIds);
+      context.docsIntersection[prop] = prioritizeTokenScores(vals, (params === null || params === void 0 ? void 0 : (_params_boost = params.boost) === null || _params_boost === void 0 ? void 0 : _params_boost[prop]) ?? 1, threshold, tokensLength);
+      const uniqueDocs = context.docsIntersection[prop];
+      const uniqueDocsLength = uniqueDocs.length;
+      for (let i2 = 0; i2 < uniqueDocsLength; i2++) {
+        const [id, score] = uniqueDocs[i2];
+        const prevScore = context.uniqueDocsIDs[id];
+        if (prevScore) {
+          context.uniqueDocsIDs[id] = prevScore + score + 0.5;
+        } else {
+          context.uniqueDocsIDs[id] = score;
+        }
+      }
+    }
+  } else if (tokens.length === 0 && term) {
+    context.uniqueDocsIDs = {};
+  } else {
+    context.uniqueDocsIDs = Object.fromEntries(Object.keys(await orama.documentsStore.getAll(orama.data.docs)).map((k) => [
+      k,
+      0
+    ]));
+  }
+  let uniqueDocsArray = Object.entries(context.uniqueDocsIDs).map(([id, score]) => [
+    +id,
+    score
+  ]);
+  if (hasFilters) {
+    uniqueDocsArray = intersectFilteredIDs(whereFiltersIDs, uniqueDocsArray);
+  }
+  if (params.sortBy) {
+    if (typeof params.sortBy === "function") {
+      const ids = uniqueDocsArray.map(([id]) => id);
+      const docs2 = await orama.documentsStore.getMultiple(orama.data.docs, ids);
+      const docsWithIdAndScore = docs2.map((d, i) => [
+        uniqueDocsArray[i][0],
+        uniqueDocsArray[i][1],
+        d
+      ]);
+      docsWithIdAndScore.sort(params.sortBy);
+      uniqueDocsArray = docsWithIdAndScore.map(([id, score]) => [
+        id,
+        score
+      ]);
+    } else {
+      uniqueDocsArray = await orama.sorter.sortBy(orama.data.sorting, uniqueDocsArray, params.sortBy).then((results2) => results2.map(([id, score]) => [
+        getInternalDocumentId(orama.internalDocumentIDStore, id),
+        score
+      ]));
+    }
+  } else {
+    uniqueDocsArray = uniqueDocsArray.sort(sortTokenScorePredicate);
+  }
+  let results;
+  if (!isPreflight) {
+    results = await (distinctOn ? fetchDocumentsWithDistinct(orama, uniqueDocsArray, offset, limit, distinctOn) : fetchDocuments(orama, uniqueDocsArray, offset, limit));
+  }
+  const searchResult = {
+    elapsed: {
+      formatted: "",
+      raw: 0
+    },
+    // We keep the hits array empty if it's a preflight request.
+    hits: [],
+    count: uniqueDocsArray.length
+  };
+  if (typeof results !== "undefined") {
+    searchResult.hits = results.filter(Boolean);
+    if (!includeVectors) {
+      removeVectorsFromHits(searchResult, vectorProperties);
+    }
+  }
+  if (shouldCalculateFacets) {
+    const facets = await getFacets(orama, uniqueDocsArray, params.facets);
+    searchResult.facets = facets;
+  }
+  if (params.groupBy) {
+    searchResult.groups = await getGroups(orama, uniqueDocsArray, params.groupBy);
+  }
+  if (orama.afterSearch) {
+    await runAfterSearch(orama.afterSearch, orama, params, language, searchResult);
+  }
+  searchResult.elapsed = await orama.formatElapsedTime(await getNanosecondsTime() - context.timeStart);
+  return searchResult;
+}
+
+// node_modules/@orama/orama/dist/methods/search-vector.js
+async function searchVector(orama, params, language = "english") {
+  const timeStart = await getNanosecondsTime();
+  if (orama.beforeSearch) {
+    await runBeforeSearch(orama.beforeSearch, orama, params, language);
+  }
+  const { vector } = params;
+  if (vector && (!("value" in vector) || !("property" in vector))) {
+    throw createError("INVALID_VECTOR_INPUT", Object.keys(vector).join(", "));
+  }
+  const { limit = 10, offset = 0, includeVectors = false } = params;
+  const vectorIndex = orama.data.index.vectorIndexes[vector.property];
+  const vectorSize = vectorIndex.size;
+  const vectors = vectorIndex.vectors;
+  const shouldCalculateFacets = params.facets && Object.keys(params.facets).length > 0;
+  const hasFilters = Object.keys(params.where ?? {}).length > 0;
+  const { index, docs: oramaDocs } = orama.data;
+  if ((vector === null || vector === void 0 ? void 0 : vector.value.length) !== vectorSize) {
+    throw createError("INVALID_INPUT_VECTOR", vector === null || vector === void 0 ? void 0 : vector.property, vectorSize, vector === null || vector === void 0 ? void 0 : vector.value.length);
+  }
+  if (!(vector instanceof Float32Array)) {
+    vector.value = new Float32Array(vector.value);
+  }
+  let results = findSimilarVectors(vector.value, vectors, vectorSize, params.similarity).map(([id, score]) => [
+    getInternalDocumentId(orama.internalDocumentIDStore, id),
+    score
+  ]);
+  let propertiesToSearch = orama.caches["propertiesToSearch"];
+  if (!propertiesToSearch) {
+    const propertiesToSearchWithTypes = await orama.index.getSearchablePropertiesWithTypes(index);
+    propertiesToSearch = await orama.index.getSearchableProperties(index);
+    propertiesToSearch = propertiesToSearch.filter((prop) => propertiesToSearchWithTypes[prop].startsWith("string"));
+    orama.caches["propertiesToSearch"] = propertiesToSearch;
+  }
+  const tokens = [];
+  const context = await createSearchContext(orama.tokenizer, orama.index, orama.documentsStore, language, params, propertiesToSearch, tokens, await orama.documentsStore.count(oramaDocs), timeStart);
+  let whereFiltersIDs = [];
+  if (hasFilters) {
+    whereFiltersIDs = await orama.index.searchByWhereClause(context, index, params.where);
+    results = intersectFilteredIDs(whereFiltersIDs, results);
+  }
+  let facetsResults = [];
+  if (shouldCalculateFacets) {
+    const facets = await getFacets(orama, results, params.facets);
+    facetsResults = facets;
+  }
+  const docs = Array.from({
+    length: limit
+  });
+  for (let i = 0; i < limit; i++) {
+    const result = results[i + offset];
+    if (!result) {
+      break;
+    }
+    const doc = orama.data.docs.docs[result[0]];
+    if (doc) {
+      if (!includeVectors) {
+        doc[vector.property] = null;
+      }
+      const newDoc = {
+        id: getDocumentIdFromInternalId(orama.internalDocumentIDStore, result[0]),
+        score: result[1],
+        document: doc
+      };
+      docs[i] = newDoc;
+    }
+  }
+  let groups = [];
+  if (params.groupBy) {
+    groups = await getGroups(orama, results, params.groupBy);
+  }
+  if (orama.afterSearch) {
+    await runAfterSearch(orama.afterSearch, orama, params, language, results);
+  }
+  const timeEnd = await getNanosecondsTime();
+  const elapsedTime = timeEnd - timeStart;
+  return {
+    count: results.length,
+    hits: docs.filter(Boolean),
+    elapsed: {
+      raw: Number(elapsedTime),
+      formatted: await formatNanoseconds(elapsedTime)
+    },
+    ...facetsResults ? {
+      facets: facetsResults
+    } : {},
+    ...groups ? {
+      groups
+    } : {}
+  };
+}
+
+// node_modules/@orama/orama/dist/methods/search-hybrid.js
+async function hybridSearch(orama, params, language) {
+  const timeStart = await getNanosecondsTime();
+  if (orama.beforeSearch) {
+    await runBeforeSearch(orama.beforeSearch, orama, params, language);
+  }
+  const { offset = 0, limit = 10, includeVectors = false } = params;
+  const shouldCalculateFacets = params.facets && Object.keys(params.facets).length > 0;
+  const [fullTextIDs, vectorIDs] = await Promise.all([
+    getFullTextSearchIDs(orama, params, language),
+    getVectorSearchIDs(orama, params)
+  ]);
+  const { index, docs } = orama.data;
+  const hybridWeights = params.hybridWeights;
+  let uniqueTokenScores = mergeAndRankResults(fullTextIDs, vectorIDs, params.term ?? "", hybridWeights);
+  const tokens = await orama.tokenizer.tokenize(params.term ?? "", language);
+  let propertiesToSearch = orama.caches["propertiesToSearch"];
+  if (!propertiesToSearch) {
+    const propertiesToSearchWithTypes = await orama.index.getSearchablePropertiesWithTypes(index);
+    propertiesToSearch = await orama.index.getSearchableProperties(index);
+    propertiesToSearch = propertiesToSearch.filter((prop) => propertiesToSearchWithTypes[prop].startsWith("string"));
+    orama.caches["propertiesToSearch"] = propertiesToSearch;
+  }
+  if (params.properties && params.properties !== "*") {
+    for (const prop of params.properties) {
+      if (!propertiesToSearch.includes(prop)) {
+        throw createError("UNKNOWN_INDEX", prop, propertiesToSearch.join(", "));
+      }
+    }
+    propertiesToSearch = propertiesToSearch.filter((prop) => params.properties.includes(prop));
+  }
+  const context = await createSearchContext(orama.tokenizer, orama.index, orama.documentsStore, language, params, propertiesToSearch, tokens, await orama.documentsStore.count(docs), timeStart);
+  const hasFilters = Object.keys(params.where ?? {}).length > 0;
+  let whereFiltersIDs = [];
+  if (hasFilters) {
+    whereFiltersIDs = await orama.index.searchByWhereClause(context, index, params.where);
+    uniqueTokenScores = intersectFilteredIDs(whereFiltersIDs, uniqueTokenScores).slice(offset, offset + limit);
+  }
+  let facetsResults;
+  if (shouldCalculateFacets) {
+    const facets = await getFacets(orama, uniqueTokenScores, params.facets);
+    facetsResults = facets;
+  }
+  let groups;
+  if (params.groupBy) {
+    groups = await getGroups(orama, uniqueTokenScores, params.groupBy);
+  }
+  const results = (await fetchDocuments(orama, uniqueTokenScores, offset, limit)).filter(Boolean);
+  if (orama.afterSearch) {
+    await runAfterSearch(orama.afterSearch, orama, params, language, results);
+  }
+  const timeEnd = await getNanosecondsTime();
+  const returningResults = {
+    count: uniqueTokenScores.length,
+    elapsed: {
+      raw: Number(timeEnd - timeStart),
+      formatted: await formatNanoseconds(timeEnd - timeStart)
+    },
+    hits: results,
+    ...facetsResults ? {
+      facets: facetsResults
+    } : {},
+    ...groups ? {
+      groups
+    } : {}
+  };
+  if (!includeVectors) {
+    const vectorProperties = Object.keys(orama.data.index.vectorIndexes);
+    removeVectorsFromHits(returningResults, vectorProperties);
+  }
+  return returningResults;
+}
+async function getFullTextSearchIDs(orama, params, language) {
+  const timeStart = await getNanosecondsTime();
+  params.relevance = Object.assign(defaultBM25Params, params.relevance ?? {});
+  const { term = "", properties, threshold = 1 } = params;
+  const { index, docs } = orama.data;
+  const tokens = await orama.tokenizer.tokenize(term, language);
+  let propertiesToSearch = orama.caches["propertiesToSearch"];
+  if (!propertiesToSearch) {
+    const propertiesToSearchWithTypes = await orama.index.getSearchablePropertiesWithTypes(index);
+    propertiesToSearch = await orama.index.getSearchableProperties(index);
+    propertiesToSearch = propertiesToSearch.filter((prop) => propertiesToSearchWithTypes[prop].startsWith("string"));
+    orama.caches["propertiesToSearch"] = propertiesToSearch;
+  }
+  if (properties && properties !== "*") {
+    const propertiesToSearchSet = new Set(propertiesToSearch);
+    const propertiesSet = new Set(properties);
+    for (const prop of properties) {
+      if (!propertiesToSearchSet.has(prop)) {
+        throw createError("UNKNOWN_INDEX", prop, propertiesToSearch.join(", "));
+      }
+    }
+    propertiesToSearch = propertiesToSearch.filter((prop) => propertiesSet.has(prop));
+  }
+  const context = await createSearchContext(orama.tokenizer, orama.index, orama.documentsStore, language, params, propertiesToSearch, tokens, await orama.documentsStore.count(docs), timeStart);
+  const tokensLength = tokens.length;
+  if (tokensLength || properties && properties.length > 0) {
+    const indexesLength = propertiesToSearch.length;
+    for (let i = 0; i < indexesLength; i++) {
+      var _params_boost;
+      const prop = propertiesToSearch[i];
+      if (tokensLength !== 0) {
+        for (let j = 0; j < tokensLength; j++) {
+          const term2 = tokens[j];
+          const scoreList = await orama.index.search(context, index, prop, term2);
+          safeArrayPush(context.indexMap[prop][term2], scoreList);
+        }
+      } else {
+        const indexMapContent = [];
+        context.indexMap[prop][""] = indexMapContent;
+        const scoreList = await orama.index.search(context, index, prop, "");
+        safeArrayPush(indexMapContent, scoreList);
+      }
+      const docIds = context.indexMap[prop];
+      const vals = Object.values(docIds);
+      context.docsIntersection[prop] = prioritizeTokenScores(vals, (params === null || params === void 0 ? void 0 : (_params_boost = params.boost) === null || _params_boost === void 0 ? void 0 : _params_boost[prop]) ?? 1, threshold, tokensLength);
+      const uniqueDocs = context.docsIntersection[prop];
+      const uniqueDocsLength = uniqueDocs.length;
+      for (let i2 = 0; i2 < uniqueDocsLength; i2++) {
+        const [id, score] = uniqueDocs[i2];
+        const prevScore = context.uniqueDocsIDs[id];
+        context.uniqueDocsIDs[id] = prevScore ? prevScore + score + 0.5 : score;
+      }
+    }
+  } else if (tokens.length === 0 && term) {
+    context.uniqueDocsIDs = {};
+  } else {
+    context.uniqueDocsIDs = Object.fromEntries(Object.keys(await orama.documentsStore.getAll(orama.data.docs)).map((k) => [
+      k,
+      0
+    ]));
+  }
+  const uniqueIDs = Object.entries(context.uniqueDocsIDs).map(([id, score]) => [
+    +id,
+    score
+  ]).sort((a, b) => b[1] - a[1]);
+  return minMaxScoreNormalization(uniqueIDs);
+}
+async function getVectorSearchIDs(orama, params) {
+  const vector = params.vector;
+  const vectorIndex = orama.data.index.vectorIndexes[vector === null || vector === void 0 ? void 0 : vector.property];
+  const vectorSize = vectorIndex.size;
+  const vectors = vectorIndex.vectors;
+  if (vector && (!vector.value || !vector.property)) {
+    throw createError("INVALID_VECTOR_INPUT", Object.keys(vector).join(", "));
+  }
+  if (vector.value.length !== vectorSize) {
+    throw createError("INVALID_INPUT_VECTOR", vector.property, vectorSize, vector.value.length);
+  }
+  if (!(vector instanceof Float32Array)) {
+    vector.value = new Float32Array(vector.value);
+  }
+  const uniqueIDs = findSimilarVectors(vector.value, vectors, vectorSize, params.similarity).map(([id, score]) => [
+    getInternalDocumentId(orama.internalDocumentIDStore, id),
+    score
+  ]);
+  return minMaxScoreNormalization(uniqueIDs);
+}
+function extractScore([, score]) {
+  return score;
+}
+function minMaxScoreNormalization(results) {
+  const maxScore = Math.max.apply(Math, results.map(extractScore));
+  return results.map(([id, score]) => [
+    id,
+    score / maxScore
+  ]);
+}
+function normalizeScore(score, maxScore) {
+  return score / maxScore;
+}
+function hybridScoreBuilder(textWeight, vectorWeight) {
+  return (textScore, vectorScore) => textScore * textWeight + vectorScore * vectorWeight;
+}
+function mergeAndRankResults(textResults, vectorResults, query, hybridWeights) {
+  const maxTextScore = Math.max.apply(Math, textResults.map(extractScore));
+  const maxVectorScore = Math.max.apply(Math, vectorResults.map(extractScore));
+  const hasHybridWeights = hybridWeights && hybridWeights.text && hybridWeights.vector;
+  const { text: textWeight, vector: vectorWeight } = hasHybridWeights ? hybridWeights : getQueryWeights(query);
+  const mergedResults = /* @__PURE__ */ new Map();
+  const textResultsLength = textResults.length;
+  const hybridScore = hybridScoreBuilder(textWeight, vectorWeight);
+  for (let i = 0; i < textResultsLength; i++) {
+    const [id, score] = textResults[i];
+    const normalizedScore = normalizeScore(score, maxTextScore);
+    const hybridScoreValue = hybridScore(normalizedScore, 0);
+    mergedResults.set(id, hybridScoreValue);
+  }
+  const vectorResultsLength = vectorResults.length;
+  for (let i = 0; i < vectorResultsLength; i++) {
+    const [resultId, score] = vectorResults[i];
+    const normalizedScore = normalizeScore(score, maxVectorScore);
+    const existingRes = mergedResults.get(resultId) ?? 0;
+    mergedResults.set(resultId, existingRes + hybridScore(0, normalizedScore));
+  }
+  return [
+    ...mergedResults
+  ].sort((a, b) => b[1] - a[1]);
+}
+function getQueryWeights(query) {
+  return {
+    text: 0.5,
+    vector: 0.5
+  };
+}
+
+// node_modules/@orama/orama/dist/methods/search.js
+var defaultBM25Params = {
+  k: 1.2,
+  b: 0.75,
+  d: 0.5
+};
+async function createSearchContext(tokenizer, index, documentsStore, language, params, properties, tokens, docsCount, timeStart) {
+  const indexMap = {};
+  const docsIntersection = {};
+  for (const prop of properties) {
+    const tokensMap = {};
+    for (const token of tokens) {
+      tokensMap[token] = [];
+    }
+    indexMap[prop] = tokensMap;
+    docsIntersection[prop] = [];
+  }
+  return {
+    timeStart,
+    tokenizer,
+    index,
+    documentsStore,
+    language,
+    params,
+    docsCount,
+    uniqueDocsIDs: {},
+    indexMap,
+    docsIntersection
+  };
+}
+async function search2(orama, params, language) {
+  const mode = params.mode ?? MODE_FULLTEXT_SEARCH;
+  if (mode === MODE_FULLTEXT_SEARCH) {
+    return fullTextSearch(orama, params, language);
+  }
+  if (mode === MODE_VECTOR_SEARCH) {
+    return searchVector(orama, params);
+  }
+  if (mode === MODE_HYBRID_SEARCH) {
+    return hybridSearch(orama, params);
+  }
+  throw createError("INVALID_SEARCH_MODE", mode);
+}
+async function fetchDocumentsWithDistinct(orama, uniqueDocsArray, offset, limit, distinctOn) {
+  const docs = orama.data.docs;
+  const values = /* @__PURE__ */ new Map();
+  const results = [];
+  const resultIDs = /* @__PURE__ */ new Set();
+  const uniqueDocsArrayLength = uniqueDocsArray.length;
+  let count2 = 0;
+  for (let i = 0; i < uniqueDocsArrayLength; i++) {
+    const idAndScore = uniqueDocsArray[i];
+    if (typeof idAndScore === "undefined") {
+      continue;
+    }
+    const [id, score] = idAndScore;
+    if (resultIDs.has(id)) {
+      continue;
+    }
+    const doc = await orama.documentsStore.get(docs, id);
+    const value = await getNested(doc, distinctOn);
+    if (typeof value === "undefined" || values.has(value)) {
+      continue;
+    }
+    values.set(value, true);
+    count2++;
+    if (count2 <= offset) {
+      continue;
+    }
+    results.push({
+      id: getDocumentIdFromInternalId(orama.internalDocumentIDStore, id),
+      score,
+      document: doc
+    });
+    resultIDs.add(id);
+    if (count2 >= offset + limit) {
+      break;
+    }
+  }
+  return results;
+}
+async function fetchDocuments(orama, uniqueDocsArray, offset, limit) {
+  const docs = orama.data.docs;
+  const results = Array.from({
+    length: limit
+  });
+  const resultIDs = /* @__PURE__ */ new Set();
+  for (let i = offset; i < limit + offset; i++) {
+    const idAndScore = uniqueDocsArray[i];
+    if (typeof idAndScore === "undefined") {
+      break;
+    }
+    const [id, score] = idAndScore;
+    if (!resultIDs.has(id)) {
+      const fullDoc = await orama.documentsStore.get(docs, id);
+      results[i] = {
+        id: getDocumentIdFromInternalId(orama.internalDocumentIDStore, id),
+        score,
+        document: fullDoc
+      };
+      resultIDs.add(id);
+    }
+  }
+  return results;
+}
+
+// src/nodes/imvb/InsertVectorNode.ts
+var insertVectorPluginNode = (rivet) => {
   const impl = {
     create() {
       const node = {
         id: rivet.newId(),
         data: {
-          id: "",
+          vdb: void 0,
+          title: "",
           embedding: [],
           text: ""
         },
-        title: "Add Vector Embedding",
-        type: "addVector",
+        title: "Insert Vector Embedding",
+        type: "insertVector",
         visualData: {
           x: 0,
           y: 0,
@@ -3188,11 +4177,19 @@ var addVectorPluginNode = (rivet) => {
     },
     getInputDefinitions(data, _connections, _nodes, _project) {
       const inputs = [];
-      if (data.useIdInput) {
+      if (data.useVdbInput) {
         inputs.push({
-          id: "id",
+          id: "vdb",
+          dataType: "any",
+          title: "Database",
+          required: true
+        });
+      }
+      if (data.useTitleInput) {
+        inputs.push({
+          id: "title",
           dataType: "string",
-          title: "ID",
+          title: "Title",
           required: true
         });
       }
@@ -3220,51 +4217,54 @@ var addVectorPluginNode = (rivet) => {
           id: "id",
           dataType: "string",
           title: "ID"
-        },
-        {
-          id: "score",
-          dataType: "number",
-          title: "Score"
-        },
-        {
-          id: "embedding",
-          dataType: "vector",
-          title: "Embedding"
         }
       ];
     },
     getUIData(_context) {
       return {
-        contextMenuTitle: "Add Vector",
-        group: "Vector DB",
-        infoBoxBody: "This is a node for adding text to the in-memory vector database.",
-        infoBoxTitle: "Add Vector Node"
+        contextMenuTitle: "Insert Vector",
+        group: "Orama",
+        infoBoxBody: "This is a node for inserting text to the in-memory vector database.",
+        infoBoxTitle: "Insert Vector Node"
       };
     },
     getEditors(_data) {
       return [
         {
           type: "string",
-          dataKey: "id",
-          label: "ID",
-          useInputToggleDataKey: "useIdInput"
+          dataKey: "title",
+          label: "Title",
+          useInputToggleDataKey: "useTitleInput"
         },
         {
           type: "anyData",
           dataKey: "embedding",
           label: "Embedding",
           useInputToggleDataKey: "useEmbeddingInput"
+        },
+        {
+          type: "anyData",
+          dataKey: "vdb",
+          label: "VDB",
+          useInputToggleDataKey: "useVdbInput"
         }
       ];
     },
     getBody(data, _context) {
       return rivet.dedent`
-        Add Vector Node
-        ID: ${data.id}
+        Insert Vector Node
+        ID: ${data.title}
         Vector: [${data.embedding}]
       `;
     },
     async process(data, inputData, _context) {
+      const vdb = rivet.getInputOrData(
+        data,
+        inputData,
+        "vdb",
+        "any",
+        "useVdbInput"
+      );
       const embedding = rivet.getInputOrData(
         data,
         inputData,
@@ -3272,12 +4272,12 @@ var addVectorPluginNode = (rivet) => {
         "vector",
         "useEmbeddingInput"
       );
-      const id = rivet.getInputOrData(
+      const name = rivet.getInputOrData(
         data,
         inputData,
-        "id",
+        "title",
         "string",
-        "useIdInput"
+        "useTitleInput"
       );
       const text = rivet.getInputOrData(
         data,
@@ -3286,26 +4286,242 @@ var addVectorPluginNode = (rivet) => {
         "string",
         "useTextInput"
       );
-      const added = await insert7(vdb, {
-        name: id,
+      const id = await insert7(vdb, {
+        name,
         body: text,
         embedding
       });
       return {
         ["id"]: {
           type: "string",
-          value: added
+          value: id
         }
       };
     }
   };
-  return rivet.pluginNodeDefinition(impl, "Add Vector");
+  return rivet.pluginNodeDefinition(impl, "Insert Vector");
+};
+
+// src/nodes/imvb/CreateDatabaseNode.ts
+function createDatabasePluginNode(rivet) {
+  const CreateDatebasePluginNodeImpl = {
+    create() {
+      const node = {
+        id: rivet.newId(),
+        data: {
+          vdb: void 0,
+          vectorSize: 0
+        },
+        title: "In-Memory Db",
+        type: "createDatabasePlugin",
+        visualData: {
+          x: 0,
+          y: 0,
+          width: 200
+        }
+      };
+      return node;
+    },
+    // This function should return all input ports for your node, given its data, connections, all other nodes, and the project. The
+    // connection, nodes, and project are for advanced use-cases and can usually be ignored.
+    getInputDefinitions(data, _connections, _nodes, _project) {
+      const inputs = [];
+      if (data.useVectorSizeInput) {
+        inputs.push({
+          id: "vectorSize",
+          dataType: "number",
+          title: "Size",
+          required: true
+        });
+      }
+      return inputs;
+    },
+    // This function should return all output ports for your node, given its data, connections, all other nodes, and the project. The
+    // connection, nodes, and project are for advanced use-cases and can usually be ignored.
+    getOutputDefinitions(_data, _connections, _nodes, _project) {
+      return [
+        {
+          id: "vdb",
+          dataType: "any",
+          title: "Database"
+        }
+      ];
+    },
+    // This returns UI information for your node, such as how it appears in the context menu.
+    getUIData() {
+      return {
+        contextMenuTitle: "Orama Database",
+        group: "Orama",
+        infoBoxBody: "Orama in-memory database.",
+        infoBoxTitle: "Orama Create Plugin"
+      };
+    },
+    // This function defines all editors that appear when you edit your node.
+    getEditors(_data) {
+      return [
+        {
+          type: "number",
+          dataKey: "vectorSize",
+          useInputToggleDataKey: "useVectorSizeInput",
+          label: "Vector Length"
+        }
+      ];
+    },
+    // This function returns the body of the node when it is rendered on the graph. You should show
+    // what the current data of the node is in some way that is useful at a glance.
+    getBody(_data) {
+      return rivet.dedent`
+          Orama Vector DB
+          `;
+    },
+    // This is the main processing function for your node. It can do whatever you like, but it must return
+    // a valid Outputs object, which is a map of port IDs to DataValue objects. The return value of this function
+    // must also correspond to the output definitions you defined in the getOutputDefinitions function.
+    async process(data, inputData, _context) {
+      const size = rivet.getInputOrData(
+        data,
+        inputData,
+        "vectorSize",
+        "number",
+        "useVectorSizeInput"
+      );
+      let vdb = await create8({
+        schema: {
+          name: "string",
+          body: "string",
+          embedding: `vector[${size}]`
+        },
+        id: "vdb"
+      });
+      return {
+        ["vdb"]: {
+          type: "any",
+          value: vdb
+        }
+      };
+    }
+  };
+  const createDatabasePluginNode2 = rivet.pluginNodeDefinition(
+    CreateDatebasePluginNodeImpl,
+    "Create In-Memory Vector Database"
+  );
+  return createDatabasePluginNode2;
+}
+
+// src/nodes/imvb/SearchDatabaseNode.ts
+var searchDatabasePluginNode = (rivet) => {
+  const impl = {
+    create() {
+      const node = {
+        id: rivet.newId(),
+        data: {
+          vdb: void 0,
+          searchText: ""
+        },
+        title: "Search Database Embedding",
+        type: "searchDatabase",
+        visualData: {
+          x: 0,
+          y: 0,
+          width: 200
+        }
+      };
+      return node;
+    },
+    getInputDefinitions(data, _connections, _nodes, _project) {
+      const inputs = [];
+      if (data.useVdbInput) {
+        inputs.push({
+          id: "vdb",
+          dataType: "any",
+          title: "Database",
+          required: true
+        });
+      }
+      if (data.useSearchTextInput) {
+        inputs.push({
+          id: "searchText",
+          dataType: "string",
+          title: "Search Text",
+          required: true
+        });
+      }
+      return inputs;
+    },
+    getOutputDefinitions(_data, _connections, _nodes, _project) {
+      return [
+        {
+          id: "searchResults",
+          dataType: "string",
+          title: "Search Results"
+        }
+      ];
+    },
+    getUIData(_context) {
+      return {
+        contextMenuTitle: "Search Database",
+        group: "Orama",
+        infoBoxBody: "This is a node for searching text in the in-memory vector database.",
+        infoBoxTitle: "Search Database Node"
+      };
+    },
+    getEditors(_data) {
+      return [
+        {
+          type: "string",
+          dataKey: "searchText",
+          label: "Search Text",
+          useInputToggleDataKey: "useSearchTextInput"
+        },
+        {
+          type: "anyData",
+          dataKey: "vdb",
+          label: "VDB",
+          useInputToggleDataKey: "useVdbInput"
+        }
+      ];
+    },
+    getBody(data, _context) {
+      return rivet.dedent`
+        Search Vector Node
+        Search Text: ${data.searchText}
+      `;
+    },
+    async process(data, inputData, _context) {
+      const vdb = rivet.getInputOrData(
+        data,
+        inputData,
+        "vdb",
+        "any",
+        "useVdbInput"
+      );
+      const text = rivet.getInputOrData(
+        data,
+        inputData,
+        "searchText",
+        "string",
+        "useSearchTextInput"
+      );
+      const results = await search2(vdb, {
+        term: text
+      });
+      return {
+        ["searchResults"]: {
+          type: "any",
+          value: results
+        }
+      };
+    }
+  };
+  return rivet.pluginNodeDefinition(impl, "Search Database");
 };
 
 // src/index.ts
 var plugin = (rivet) => {
   const guidNode = guidPluginNode(rivet);
-  const addVectorNode = addVectorPluginNode(rivet);
+  const insertVectorNode = insertVectorPluginNode(rivet);
+  const createDatabaseNode = createDatabasePluginNode(rivet);
+  const searchDatabaseNode = searchDatabasePluginNode(rivet);
   const tuesdayCrowdPlugin = {
     // The ID of your plugin should be unique across all plugins.
     id: "tuesday-crowd-plugin",
@@ -3314,12 +4530,19 @@ var plugin = (rivet) => {
     // Define all configuration settings in the configSpec object.
     configSpec: {},
     // Define any additional context menu groups your plugin adds here.
-    contextMenuGroups: [],
+    contextMenuGroups: [
+      {
+        id: "orama",
+        label: "Orama"
+      }
+    ],
     // Register any additional nodes your plugin adds here. This is passed a `register`
     // function, which you can use to register your nodes.
     register: (register) => {
       register(guidNode);
-      register(addVectorNode);
+      register(insertVectorNode);
+      register(createDatabaseNode);
+      register(searchDatabaseNode);
     }
   };
   return tuesdayCrowdPlugin;

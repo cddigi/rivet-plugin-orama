@@ -18,15 +18,14 @@ import type {
 
 import type { AnyOrama } from "@orama/orama";
 import { insert } from "@orama/orama";
-import { vdb } from "./CreateDatabaseNode";
 
-export type AddVectorNode = ChartNode<
-  "addVector",
+export type InsertVectorNode = ChartNode<
+  "insertVector",
   {
     vdb?: AnyOrama;
     useVdbInput?: boolean;
-    id: string;
-    useIdInput?: boolean;
+    title: string;
+    useTitleInput?: boolean;
     embedding: number[];
     useEmbeddingInput?: boolean;
     text: string;
@@ -34,20 +33,20 @@ export type AddVectorNode = ChartNode<
   }
 >;
 
-export const addVectorPluginNode = (rivet: typeof Rivet) => {
-  const impl: PluginNodeImpl<AddVectorNode> = {
-    create(): AddVectorNode {
-      const node: AddVectorNode = {
+export const insertVectorPluginNode = (rivet: typeof Rivet) => {
+  const impl: PluginNodeImpl<InsertVectorNode> = {
+    create(): InsertVectorNode {
+      const node: InsertVectorNode = {
         id: rivet.newId<NodeId>(),
 
         data: {
           vdb: undefined,
-          id: "",
+          title: "",
           embedding: [],
           text: "",
         },
-        title: "Add Vector Embedding",
-        type: "addVector",
+        title: "Insert Vector Embedding",
+        type: "insertVector",
         visualData: {
           x: 0,
           y: 0,
@@ -66,11 +65,20 @@ export const addVectorPluginNode = (rivet: typeof Rivet) => {
     ): NodeInputDefinition[] {
       const inputs: NodeInputDefinition[] = [];
 
-      if (data.useIdInput) {
+      if (data.useVdbInput) {
         inputs.push({
-          id: "id" as PortId,
+          id: "vdb" as PortId,
+          dataType: "any",
+          title: "Database",
+          required: true,
+        });
+      }
+
+      if (data.useTitleInput) {
+        inputs.push({
+          id: "title" as PortId,
           dataType: "string",
-          title: "ID",
+          title: "Title",
           required: true,
         });
       }
@@ -108,42 +116,38 @@ export const addVectorPluginNode = (rivet: typeof Rivet) => {
           dataType: "string",
           title: "ID",
         },
-        {
-          id: "score" as PortId,
-          dataType: "number",
-          title: "Score",
-        },
-        {
-          id: "embedding" as PortId,
-          dataType: "vector",
-          title: "Embedding",
-        },
       ];
     },
 
     getUIData(_context): NodeUIData {
       return {
-        contextMenuTitle: "Add Vector",
-        group: "Vector DB",
+        contextMenuTitle: "Insert Vector",
+        group: "Orama",
         infoBoxBody:
-          "This is a node for adding text to the in-memory vector database.",
-        infoBoxTitle: "Add Vector Node",
+          "This is a node for inserting text to the in-memory vector database.",
+        infoBoxTitle: "Insert Vector Node",
       };
     },
 
-    getEditors(_data): EditorDefinition<AddVectorNode>[] {
+    getEditors(_data): EditorDefinition<InsertVectorNode>[] {
       return [
         {
           type: "string",
-          dataKey: "id",
-          label: "ID",
-          useInputToggleDataKey: "useIdInput",
+          dataKey: "title",
+          label: "Title",
+          useInputToggleDataKey: "useTitleInput",
         },
         {
           type: "anyData",
           dataKey: "embedding",
           label: "Embedding",
           useInputToggleDataKey: "useEmbeddingInput",
+        },
+        {
+          type: "anyData",
+          dataKey: "vdb",
+          label: "VDB",
+          useInputToggleDataKey: "useVdbInput",
         },
       ];
     },
@@ -153,13 +157,21 @@ export const addVectorPluginNode = (rivet: typeof Rivet) => {
       _context,
     ): string | NodeBodySpec | NodeBodySpec[] | undefined {
       return rivet.dedent`
-        Add Vector Node
-        ID: ${data.id}
+        Insert Vector Node
+        ID: ${data.title}
         Vector: [${data.embedding}]
       `;
     },
 
     async process(data, inputData, _context): Promise<Outputs> {
+      const vdb = rivet.getInputOrData(
+        data,
+        inputData,
+        "vdb",
+        "any",
+        "useVdbInput",
+      ) as AnyOrama;
+
       const embedding = rivet.getInputOrData(
         data,
         inputData,
@@ -168,12 +180,12 @@ export const addVectorPluginNode = (rivet: typeof Rivet) => {
         "useEmbeddingInput",
       );
 
-      const id = rivet.getInputOrData(
+      const name = rivet.getInputOrData(
         data,
         inputData,
-        "id",
+        "title",
         "string",
-        "useIdInput",
+        "useTitleInput",
       );
 
       const text = rivet.getInputOrData(
@@ -184,8 +196,8 @@ export const addVectorPluginNode = (rivet: typeof Rivet) => {
         "useTextInput",
       );
 
-      const added = await insert(vdb, {
-        name: id,
+      const id = await insert(vdb, {
+        name: name,
         body: text,
         embedding: embedding,
       });
@@ -193,11 +205,11 @@ export const addVectorPluginNode = (rivet: typeof Rivet) => {
       return {
         ["id" as PortId]: {
           type: "string",
-          value: added,
+          value: id,
         },
       };
     },
   };
 
-  return rivet.pluginNodeDefinition(impl, "Add Vector");
+  return rivet.pluginNodeDefinition(impl, "Insert Vector");
 };
