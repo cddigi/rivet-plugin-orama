@@ -1,6 +1,6 @@
 <h1 align="center"><img src="https://rivet.ironcladapp.com/img/logo-banner-wide.png" alt="Rivet Logo"></h1>
 
-# rivet-plugin-tuesday-crowd
+# rivet-plugin-orama
 
 A collection of plugins for Rivet to handle "simple" tasks.
 
@@ -22,7 +22,7 @@ A collection of plugins for Rivet to handle "simple" tasks.
 To use this plugin in Rivet:
 
 1. Open the plugins overlay at the top of the screen.
-2. Search for "rivet-plugin-tuesday-crowd"
+2. Search for "rivet-plugin-orama"
 3. Click the "Install" button to install the plugin into your current project.
 
 ### In Code
@@ -31,13 +31,13 @@ Load your plugin and Rivet into your application:
 
 ```ts
 import * as Rivet from "@ironclad/rivet-core";
-import tuesdayCrowdPlugin from "rivet-plugin-tuesday-crowd";
+import oramaPlugin from "rivet-plugin-orama";
 ```
 
 Register your plugin with Rivet be using the `globalRivetNodeRegistry` or creating a new `NodeRegistration` and registering with that:
 
 ```ts
-Rivet.globalRivetNodeRegistry.registerPlugin(tuesdayCrowdPlugin(Rivet));
+Rivet.globalRivetNodeRegistry.registerPlugin(oramaPlugin(Rivet));
 ```
 
 ## Making your own plugin
