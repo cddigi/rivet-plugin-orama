@@ -165,7 +165,7 @@ export function createDatabasePluginNode(rivet: typeof Rivet) {
   // PluginNodeDefinition object.
   const createDatabasePluginNode = rivet.pluginNodeDefinition(
     CreateDatebasePluginNodeImpl,
-    "Create In-Memory Vector Database",
+    "Create Orama Database",
   );
 
   // This definition should then be used in the `register` function of your plugin definition.

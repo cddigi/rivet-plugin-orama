@@ -1,5 +1,5 @@
 {
-  "name": "rivet-plugin-tuesday-crowd",
+  "name": "rivet-plugin-orama",
   "packageManager": "yarn@3.5.0",
   "version": "1.0.0",
   "type": "module",
@@ -18,7 +18,8 @@
   "dependencies": {
     "@ironclad/rivet-core": "^1.18.0",
     "@orama/orama": "^2.0.18",
-    "@orama/plugin-data-persistence": "^2.0.18"
+    "@orama/plugin-data-persistence": "^2.0.18",
+    "@orama/plugin-secure-proxy": "^2.0.19"
   },
   "devDependencies": {
     "esbuild": "^0.19.2",
@@ -37,7 +38,7 @@
   "license": "Unlicense",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cddigi/rivet-plugin-tuesday-crowd.git"
+    "url": "git+https://github.com/cddigi/rivet-plugin-orama.git"
   },
-  "homepage": "https://github.com/cddigi/rivet-plugin-tuesday-crowd"
+  "homepage": "https://github.com/cddigi/rivet-plugin-orama"
 }
