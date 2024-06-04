@@ -149,14 +149,14 @@ export const searchDatabasePluginNode = (rivet: typeof Rivet) => {
         "useSearchTextInput",
       );
 
-      const results = await search(vdb, {
+      const searchResult = await search(vdb, {
         term: text,
       });
 
       return {
         ["searchResults" as PortId]: {
-          type: "any",
-          value: results,
+          type: "object",
+          value: searchResult,
         },
       };
     },

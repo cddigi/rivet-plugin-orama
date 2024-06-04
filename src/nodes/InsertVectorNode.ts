@@ -138,6 +138,12 @@ export const insertVectorPluginNode = (rivet: typeof Rivet) => {
           useInputToggleDataKey: "useTitleInput",
         },
         {
+          type: "string",
+          dataKey: "text",
+          label: "Text",
+          useInputToggleDataKey: "useTextInput",
+        },
+        {
           type: "anyData",
           dataKey: "embedding",
           label: "Embedding",
