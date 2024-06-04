@@ -1,7 +1,7 @@
 {
   "name": "rivet-plugin-orama",
   "packageManager": "yarn@3.5.0",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "main": "dist/bundle.js",
   "files": [
