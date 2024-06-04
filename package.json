@@ -17,9 +17,7 @@
   },
   "dependencies": {
     "@ironclad/rivet-core": "^1.18.0",
-    "@orama/orama": "^2.0.18",
-    "@orama/plugin-data-persistence": "^2.0.18",
-    "@orama/plugin-secure-proxy": "^2.0.19"
+    "@orama/orama": "^2.0.18"
   },
   "devDependencies": {
     "esbuild": "^0.19.2",

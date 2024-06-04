@@ -26,6 +26,8 @@ export type SearchDatabaseNode = ChartNode<
     useVdbInput?: boolean;
     searchText: string;
     useSearchTextInput?: boolean;
+    searchEmbedding: number[];
+    useSearchEmbeddingInput?: boolean;
   }
 >;
 
@@ -38,6 +40,7 @@ export const searchDatabasePluginNode = (rivet: typeof Rivet) => {
         data: {
           vdb: undefined,
           searchText: "",
+          searchEmbedding: [],
         },
         title: "Search Database Embedding",
         type: "searchDatabase",
@@ -73,7 +76,16 @@ export const searchDatabasePluginNode = (rivet: typeof Rivet) => {
           id: "searchText" as PortId,
           dataType: "string",
           title: "Search Text",
-          required: true,
+          required: false,
+        });
+      }
+
+      if (data.useSearchEmbeddingInput) {
+        inputs.push({
+          id: "searchEmbedding" as PortId,
+          dataType: "vector",
+          title: "Embedding",
+          required: false,
         });
       }
 
@@ -119,6 +131,12 @@ export const searchDatabasePluginNode = (rivet: typeof Rivet) => {
           label: "VDB",
           useInputToggleDataKey: "useVdbInput",
         },
+        {
+          type: "anyData",
+          dataKey: "searchEmbedding",
+          label: "Embedding",
+          useInputToggleDataKey: "useSearchEmbeddingInput",
+        },
       ];
     },
 
@@ -149,9 +167,30 @@ export const searchDatabasePluginNode = (rivet: typeof Rivet) => {
         "useSearchTextInput",
       );
 
-      const searchResult = await search(vdb, {
-        term: text,
-      });
+      const embedding = rivet.getInputOrData(
+        data,
+        inputData,
+        "searchEmbedding",
+        "vector",
+        "useSearchEmbeddingInput",
+      );
+
+      let searchResult;
+
+      if (text.length > 0) {
+        searchResult = await search(vdb, {
+          term: text,
+        });
+      } else {
+        searchResult = await search(vdb, {
+          mode: "vector",
+          vector: {
+            value: embedding,
+            property: "embedding",
+          },
+          similarity: 0.4,
+        });
+      }
 
       return {
         ["searchResults" as PortId]: {
