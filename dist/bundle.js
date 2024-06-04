@@ -4221,7 +4221,8 @@ var searchDatabasePluginNode = (rivet) => {
         id: rivet.newId(),
         data: {
           vdb: void 0,
-          searchText: ""
+          searchText: "",
+          searchEmbedding: []
         },
         title: "Search Database Embedding",
         type: "searchDatabase",
@@ -4248,7 +4249,15 @@ var searchDatabasePluginNode = (rivet) => {
           id: "searchText",
           dataType: "string",
           title: "Search Text",
-          required: true
+          required: false
+        });
+      }
+      if (data.useSearchEmbeddingInput) {
+        inputs.push({
+          id: "searchEmbedding",
+          dataType: "vector",
+          title: "Embedding",
+          required: false
         });
       }
       return inputs;
@@ -4283,6 +4292,12 @@ var searchDatabasePluginNode = (rivet) => {
           dataKey: "vdb",
           label: "VDB",
           useInputToggleDataKey: "useVdbInput"
+        },
+        {
+          type: "anyData",
+          dataKey: "searchEmbedding",
+          label: "Embedding",
+          useInputToggleDataKey: "useSearchEmbeddingInput"
         }
       ];
     },
@@ -4307,9 +4322,28 @@ var searchDatabasePluginNode = (rivet) => {
         "string",
         "useSearchTextInput"
       );
-      const searchResult = await search2(vdb, {
-        term: text
-      });
+      const embedding = rivet.getInputOrData(
+        data,
+        inputData,
+        "searchEmbedding",
+        "vector",
+        "useSearchEmbeddingInput"
+      );
+      let searchResult;
+      if (text.length > 0) {
+        searchResult = await search2(vdb, {
+          term: text
+        });
+      } else {
+        searchResult = await search2(vdb, {
+          mode: "vector",
+          vector: {
+            value: embedding,
+            property: "embedding"
+          },
+          similarity: 0.4
+        });
+      }
       return {
         ["searchResults"]: {
           type: "object",
